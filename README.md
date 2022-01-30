@@ -1,0 +1,3 @@
+# SeqSeg
+
+Sequence segmentation
