@@ -4,6 +4,7 @@ import sys
 from pytorch_lightning import Trainer
 
 from kornia.geometry import ImageRegistrator
+from soupsieve import select
 from models.LabelProp import LabelProp
 import torch
 import numpy as np
@@ -45,14 +46,13 @@ else:
 
 
 dir=f'/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/{dataset}'
-ckpt_up=None#'labelprop-up-epoch=86-val_accuracy=0.30[0].ckpt'#'labelprop-up-epoch=98-val_accuracy=0.85[1].ckpt'#'labelprop-up-epoch=99-val_accuracy=0.58[19].ckpt'
-ckpt_down='labelprop-down-epoch=00-val_accuracy=0.11[1].ckpt'#'labelprop-up-epoch=97-val_accuracy=0.84[1].ckpt'
-selected_slices=[100]+[128]#+list(range(101,185))[::2]#+[156]+[185]
-data_PARAMS = {'batch_size':1,'subject_ids': [0], 'val_ids': [0], 'test_ids': [0],'aug':True,'dim':dim,'shape':size,'lab':1,'selected_slices':selected_slices}
+ckpt_up=None#'labelprop-up-epoch=199-val_accuracy=1.00[0].ckpt'#'labelprop-up-epoch=185-val_accuracy=0.08[0].ckpt'
+ckpt_down='labelprop-up-epoch=199-val_accuracy=1.00[0].ckpt'#'labelprop-up-epoch=97-val_accuracy=0.84[1].ckpt'
+selected_slices=[100]+[142]+[185]#+list(range(101,185))[::2]#+[156]+[185]
+data_PARAMS = {'batch_size':1,'subject_ids': [0], 'val_ids': [0], 'test_ids': [0],'aug':True,'dim':dim,'shape':size,'lab':1,'selected_slices':{'000':selected_slices,'002':None}}
 dm=DMDDataModule(**data_PARAMS,way='up')
 logger=TensorBoardLogger("tb_logs", name="label_prop",log_graph=True)
 model_up=LabelProp(way='both',dim=dim,size=size,selected_slices=selected_slices)
-model_down=LabelProp(way='down',dim=dim,size=size)
 
 checkpoint_callback_up = ModelCheckpoint(
         monitor='val_accuracy',
@@ -80,32 +80,29 @@ else:
     model_up=model_up.load_from_checkpoint(ckpt_up,strict=False)
 print(checkpoint_callback_up.best_model_path)
 
-dm=DMDDataModule(**data_PARAMS,way='up')
+# dm=DMDDataModule(**data_PARAMS,way='up')
 
-if ckpt_down==None:
-    trainer=Trainer(gpus=1,max_epochs=max_epochs,callbacks=checkpoint_callback_down)
-    trainer.fit(model_down,dm)
-    model_down=model_down.load_from_checkpoint(checkpoint_callback_down.best_model_path)
-else:
-    ckpt_down=f'{dir}/up/{ckpt_down}'
-    model_down=model_down.load_from_checkpoint(ckpt_down,strict=False)
 
-data_PARAMS['dim']=3
+# data_PARAMS['dim']=3
 dm.setup('fit')
 _,Y_dense=dm.val_dataloader().dataset[0]
 dm.setup('test')
 X,Y=dm.test_dataloader().dataset[0]
+print('Selected',selected_slices)
+print(Y.shape)
 if selected_slices!=None:
     for i in range(Y.shape[1]):
         if i not in selected_slices:
             Y[:,i,...]=Y[:,i,...]*0
+        else:
+            print('COUCOU',i)
 Y_sparse=new_nii(torch.argmax(Y,0).numpy(),'uint8')
 ni.save(Y_sparse,'Y_sparse.nii.gz')
 X=X[0]
 X_out=deepcopy(X)
 X_out2=deepcopy(X)
 
-flows=torch.stack([X,X],-1)
+flows=torch.stack([X,X],1)
 flows2=deepcopy(flows)
 weights=torch.zeros((Y.shape[1]))
 n=0
@@ -130,7 +127,7 @@ for i in range(Y.shape[1]):
     if len(torch.unique(torch.argmax(y1,0)))>1:
         print(i)
 model_up.to('cuda')
-
+model_up.eval()
 for i,x1 in enumerate(X):
     try:
         x2=X[i+1]
@@ -140,13 +137,14 @@ for i,x1 in enumerate(X):
         y1=Y[:,i,...]
         if len(torch.unique(torch.argmax(Y[:,i+1,...],0)))==1 and len(torch.unique(torch.argmax(y1,0)))>1:
             x,y,trans=model_up.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
-            X_out[i+1,...],Y[:,i+1,...],flows[i+1,...]=x.cpu().detach()[0],y.cpu().detach()[0],torch.moveaxis(trans.cpu().detach()[0],0,-1)
+            X_out[i+1,...],Y[:,i+1,...],flows[i+1,...]=x.cpu().detach()[0],y.cpu().detach()[0],trans.unsqueeze(0)
             # registrator=ImageRegistrator()
             # trans=registrator.register(to_batch(x1),to_batch(x2))
             # Y[i+1]=registrator.warp_src_into_dst(y1[None,...])[0].detach()
             #Y[i+1]=registrator.warp_src_into_dst(y1[None,...])[0]
 
-model_down.to('cuda')
+print(flows.shape)
+
 for i in range(X.shape[0]-1,1,-1):
     x1=X[i]
     try:
@@ -155,10 +153,11 @@ for i in range(X.shape[0]-1,1,-1):
         print('End of volume')
     else:
         y1=Y2[:,i,...]
+        
         if len(torch.unique(torch.argmax(y1,0)))>1 and len(torch.unique(torch.argmax(Y2[:,i-1,...],0)))==1:
-            x,y,trans=model_down.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
-            X_out2[i-1,...],Y2[:,i-1,...],flows2[i-1,...]=x.cpu().detach()[0],y.cpu().detach()[0],torch.moveaxis(trans.cpu().detach()[0],0,-1)
-
+           x,y,trans=model_up.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
+           X_out2[i-1,...],Y2[:,i-1,...],_=x.cpu().detach()[0],y.cpu().detach()[0],torch.moveaxis(trans.cpu().detach()[0],0,-1)
+            #Y2[:,i-1,...]=model_up.registrator.transformer(y1[None,...].cuda(),flows[i:i+1].cuda())[0].cpu().detach()
 #             registrator=ImageRegistrator()
 #             trans=registrator.register(to_batch(x1),to_batch(x2))
 #             Y2[i-1]=registrator.warp_src_into_dst(y1[None,...])[0].detach()
@@ -174,6 +173,7 @@ if selected_slices!=None:
         if i not in selected_slices and len(torch.unique(torch.argmax(Y_dense[:,i,...],0)))>1:
             dice=monai.metrics.compute_meandice(hardmax(Y[:,i,...]+Y2[:,i,...],0)[None,...], Y_dense[:,i,...][None,...], include_background=False)
             dices.append(dice)
+    #print(torch.nan_to_num(monai.metrics.compute_meandice(hardmax(Y,0)[:,100:186,...][None,...],Y_dense[:,100:186,...][None,...], include_background=False)).mean())
     print(torch.nan_to_num(torch.stack(dices)).mean())
     Y_dense=new_nii(torch.argmax(Y_dense,0),'uint8')
     ni.save(Y_dense,'Y_dense.nii.gz')

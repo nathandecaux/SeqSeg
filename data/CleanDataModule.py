@@ -82,9 +82,10 @@ class FullScan(data.Dataset):
         self.X,self.Y=self.resample(self.X,self.Y,(208,shape[0],shape[1]))
         print('shape Y avant resample',self.Y.shape)
         if selected_slices!=None:
-            for i in range(Y.shape[1]):
+            print(self.Y.shape)
+            for i in range(self.Y.shape[1]):
                 if i not in selected_slices:
-                    Y[:,i,...]=Y[:,i,...]*0
+                    self.Y[:,i,...]=self.Y[:,i,...]*0
         self.Y=torch.moveaxis(func.one_hot(self.Y.long()), -1, 1).float()
         self.aug = aug
         self.way=way
@@ -132,7 +133,7 @@ class FullScan(data.Dataset):
         # x = (x-torch.mean(x))/torch.std(x)
         #x = (x-torch.mean(x))/torch.std(x)
         # return x
-        norm = tio.RescaleIntensity((-1, 1))
+        norm = tio.RescaleIntensity((0, 1))
         if len(x.shape)==4:
             x = norm(x)
         elif len(x.shape)==3:
@@ -418,7 +419,7 @@ class InteractionData(data.Dataset):
 
 
 class PlexDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir: str = '/home/nathan/PLEX/norm',lab=1, supervised=True, subject_ids='all',test_ids=[],val_ids=[], limb='H', batch_size=8, mixup=0, aug=False,interpolate=False,dim=2,way='up',shape=(288,288),selected_slices=None):
+    def __init__(self, data_dir: str = '/home/nathan/Datasets/PLEX/bids/norm',lab=1, supervised=True, subject_ids='all',test_ids=[],val_ids=[], limb='H', batch_size=8, mixup=0, aug=False,interpolate=False,dim=2,way='up',shape=(288,288),selected_slices=None):
         super().__init__()
         self.data_dir = data_dir
         if subject_ids == 'all':
@@ -486,8 +487,10 @@ class PlexDataModule(pl.LightningDataModule):
                         data_train, mask_train, mixup=self.mixup, aug=self.aug,lab=self.lab)  # self.aug)
                         else:
                             print('selected_slices train',self.selected_slices)
+                            if idx not in self.selected_slices: selected_slices=None
+                            else: selected_slices=self.selected_slices[idx]
                             plex_train[idx][type] = FullScan(
-                        data_train, mask_train, mixup=self.mixup,lab=self.lab, aug=self.aug,dim=self.dim,way=self.way,shape=self.shape,selected_slices=self.selected_slices)  # self.aug)
+                        data_train, mask_train, mixup=self.mixup,lab=self.lab, aug=self.aug,dim=self.dim,way=self.way,shape=self.shape,selected_slices=selected_slices)  # self.aug)
                         print(data_train.shape)
                         plex_masks.append(mask_train)
                     if idx in self.indices_val:
@@ -563,7 +566,7 @@ class PlexDataModule(pl.LightningDataModule):
                         plex_test[idx][type] = PlexData(data_test, mask_test,lab=self.lab)
                     else:
                         print('selected slices test')
-                        plex_test[idx][type] = FullScan(data_test, mask_test, mixup=self.mixup, aug=self.aug,dim=self.dim,shape=self.shape,lab=self.lab,selected_slices=self.selected_slices)
+                        plex_test[idx][type] = FullScan(data_test, mask_test, mixup=self.mixup, aug=self.aug,dim=self.dim,shape=self.shape,lab=self.lab,selected_slices=None)
 
 
             for idx in self.indices_test:

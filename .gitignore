@@ -1,0 +1,6 @@
+*.nii.gz
+dependancies
+tb_logs
+voxelmorph_ckpts
+*.pyc
+settings
