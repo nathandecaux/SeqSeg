@@ -25,7 +25,7 @@ def hardmax(Y,dim):
     return torch.moveaxis(F.one_hot(torch.argmax(Y,dim)), -1, dim)
 def to_one_hot(Y,dim=1):
     return torch.moveaxis(F.one_hot(Y, 11), -1, dim).float()
-size=(288,288)
+size=(256,256)
 dim=3
 max_epochs=200
 C=1
@@ -46,14 +46,16 @@ else:
 
 
 dir=f'/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/{dataset}'
-ckpt_up='labelprop-up-epoch=150-val_accuracy=0.50[1].ckpt'#"labelprop-up-epoch=92-val_accuracy=0.92[1].ckpt"#'labelprop-up-epoch=139-val_accuracy=1.00[0, 1].ckpt'#'labelprop-up-epoch=145-val_accuracy=0.98[0, 1].ckpt'
+losses={'compo-reg-up':True,'compo-reg-down':False,'compo-dice-up':True,'compo-dice-down':False,'bidir-cons-reg':False,'bidir-cons-dice':False}
+
+ckpt_up=None#'labelprop-up-epoch=150-val_accuracy=0.50[1].ckpt'#"labelprop-up-epoch=92-val_accuracy=0.92[1].ckpt"#'labelprop-up-epoch=139-val_accuracy=1.00[0, 1].ckpt'#'labelprop-up-epoch=145-val_accuracy=0.98[0, 1].ckpt'
 resume_ckpt=None#'labelprop-up-epoch=145-val_accuracy=0.98[0, 1].ckpt'
 ckpt_down='labelprop-up-epoch=150-val_accuracy=0.50[1].ckpt'#'labelprop-up-epoch=97-val_accuracy=0.84[1].ckpt'
-selected_slices=[63,120,181]#+list(range(101,185))[::2]#+[156]+[185]
-data_PARAMS = {'batch_size':1,'subject_ids': [1], 'val_ids': [1], 'test_ids': [1],'aug':True,'dim':dim,'shape':size,'lab':1,'selected_slices':{'001':selected_slices,'002':None}}
+selected_slices=[107,160,199]#+list(range(101,185))[::2]#+[156]+[185]
+data_PARAMS = {'batch_size':1,'subject_ids': [0], 'val_ids': [0], 'test_ids': [0],'aug':True,'dim':dim,'shape':size,'lab':1,'selected_slices':{'000':selected_slices,'002':None}}
 dm=DMDDataModule(**data_PARAMS,way='up')
 logger=TensorBoardLogger("tb_logs", name="label_prop",log_graph=True)
-model_up=LabelProp(way='both',dim=dim,size=size,selected_slices=selected_slices)
+model_up=LabelProp(way='down',dim=dim,size=size,selected_slices=selected_slices,losses=losses)
 
 checkpoint_callback_up = ModelCheckpoint(
         monitor='val_accuracy',
@@ -193,7 +195,7 @@ if selected_slices!=None:
 disp=new_nii(X.detach().numpy()-X_out.detach().numpy())
 X_chunk=new_nii(X_chunk.detach().numpy())
 X=new_nii(X.detach().numpy())
-# flows=new_nii(flows.detach().numpy())
+flows=new_nii(flows.detach().numpy())
 X_out=new_nii((X_out.detach().numpy()+X_out2.detach().numpy())/2)
 Y12=new_nii(torch.argmax(Y+Y2,0).detach().numpy(),'uint8')
 Y=new_nii(torch.argmax(Y,0).detach().numpy(),'uint8')

@@ -79,7 +79,7 @@ class FullScan(data.Dataset):
         self.X = self.norm(torch.from_numpy(self.X))[None,...]
         self.Y = torch.from_numpy(self.Y)[None,...]
         if isinstance(shape,int): shape=(shape,shape) 
-        self.X,self.Y=self.resample(self.X,self.Y,(208,shape[0],shape[1]))
+        self.X,self.Y=self.resample(self.X,self.Y,(224,shape[0],shape[1]))
         print('shape Y avant resample',self.Y.shape)
         if selected_slices!=None:
             print(self.Y.shape)
