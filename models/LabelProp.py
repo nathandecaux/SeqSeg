@@ -86,12 +86,13 @@ class LabelProp(pl.LightningModule):
         #     x1_hat,trans=self.registrator.forward(x_masked,x2,registration=True)
         # else:
         if self.bidir:
-            out=self.registrator.forward(x,x2,True)  
-            x1_hat,trans,neg_trans=out
+            out=self.registrator.forward(x,x2,registration)  
             if registration:
-                return x1_hat,trans
+                x1_hat,trans,neg_trans=out
+                return x1_hat,trans,neg_trans
             else:
-                return x1_hat,trans,neg_trans#self.registrator.get_inverse_map()
+                x1_hat,_,trans=out
+                return x1_hat,trans,-trans#self.registrator.get_inverse_map()
 
         else:
             x1_hat,trans=self.registrator.forward(x,x2,registration=registration)      
@@ -104,12 +105,12 @@ class LabelProp(pl.LightningModule):
         loss_seg=0
         loss_trans=0
         if x1_hat!=None:
-            loss_ncc=nn.L1Loss()(x1_hat,x2)+nn.MSELoss()(x1_hat,x2)#+Grad()(x1_hat,x1_hat)
+            loss_ncc=NCC().loss(x1_hat,x2)#nn.SmoothL1Loss()(x1_hat,x2)#+Grad()(x1_hat,x1_hat)
         if y!=None:
             loss_seg= Dice().loss(y,y2)#+Grad()(y,y)
         if trans!=None:
             loss_trans=Grad().loss(trans,trans)
-        return loss_ncc+loss_seg+loss_trans*1e-4
+        return loss_ncc+loss_seg+loss_trans
 
     def blend(self,x,y):
         x=self.norm(x)
@@ -208,7 +209,7 @@ class LabelProp(pl.LightningModule):
                         x2=X[:,:,i+1,...]
                         #Better with double forward
                         x1_hat_f,pos,neg=self.forward(x,x2)
-                        x2_hat_b,neg,_=self.forward(x2,x)#
+                        # x2_hat_b,neg,_=self.forward(x2,x)#
                         x2_hat_b=self.registrator.transformer(x2,neg)
                         pos_seq.append(pos)
                         neg_seq.append(neg)
@@ -233,10 +234,10 @@ class LabelProp(pl.LightningModule):
                         neg_y=torch.cat(((self.apply_trans(neg_y[:,:,0,...],neg,'nearest').unsqueeze(2)),neg_y),2)
                     # self.logger.experiment.add_image('x_true',X[0,:,chunk[0],...])
                     # self.logger.experiment.add_image('neg_x',neg_x[0,:,0,...])
-                    self.logger.experiment.add_image('x_true_f',X[0,:,chunk[1],...])
-                    self.logger.experiment.add_image('pos_x',pos_x[0,:,-1,...])
-                    # loss+=self.compute_loss(pos_x[:,:,-1,...],X[:,:,chunk[1],...])
-                    # loss+=self.compute_loss(neg_x[:,:,0,...],X[:,:,chunk[0],...])
+                    # self.logger.experiment.add_image('x_true_f',X[0,:,chunk[1],...])
+                    # self.logger.experiment.add_image('pos_x',pos_x[0,:,-1,...])
+                    loss+=self.compute_loss(pos_x[:,:,-1,...],X[:,:,chunk[1],...])
+                    loss+=self.compute_loss(neg_x[:,:,0,...],X[:,:,chunk[0],...])
                     loss+=self.compute_loss(y=pos_y[:,:,-1,...],y2=Y[:,:,chunk[1],...])
                     loss+=self.compute_loss(y=neg_y[:,:,0,...],y2=Y[:,:,chunk[0],...])
 
@@ -306,8 +307,8 @@ class LabelProp(pl.LightningModule):
             for k,i in enumerate(range(chunk[0],chunk[1])):
                 x=X[:,:,i,...]
                 x2=X[:,:,i+1,...]
-                x1_hat,pos,neg=self.forward(x,x2)
-                x2_hat,neg,_=self.forward(x2,x)
+                x1_hat,pos,neg=self.forward(x,x2,registration=True)
+                x2_hat,neg,_=self.forward(x2,x,registration=True)
                 pos_seq.append(pos)
                 neg_seq.append(neg)
                 weights.append(torch.ones(1)*k-n/2)
@@ -343,7 +344,7 @@ class LabelProp(pl.LightningModule):
             for i in range(X.shape[2]):
                 if i not in self.selected_slices and len(torch.unique(torch.argmax(Y_dense[:,:,i,...],1)))>1:
                     dice=monai.metrics.compute_meandice(
-                self.hardmax(Y[:,:,i,...]+Y2[:,:,i,...],1), Y_dense[:,:,i,...], include_background=False)
+                self.hardmax(Y[:,:,i,...],1), Y_dense[:,:,i,...], include_background=False)
                     dices_dense.append(dice)
             dices_dense=torch.nan_to_num(torch.stack(dices_dense))
             print('dices dense',dices_dense.mean())
@@ -353,8 +354,8 @@ class LabelProp(pl.LightningModule):
         return dices_chunk.mean()
 
     def register_images(self,x1,x2,y1):
-        x1_hat,trans=self.forward(x1,x2,registration=True)
-        x2_hat,neg=self.forward(x2,x1,registration=True)
+        x1_hat,trans,_=self.forward(x1,x2,registration=True)
+        x2_hat,neg,_=self.forward(x2,x1,registration=True)
         return self.apply_trans(x1,trans),self.apply_trans(y1,trans),neg
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay,amsgrad=True)
