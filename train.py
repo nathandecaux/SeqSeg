@@ -18,8 +18,9 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import monai
 from data.CleanDataModule import PlexDataModule
 from data.DMDDataModule import DMDDataModule
-
+from copy import copy,deepcopy
 max_epochs=200
+
 def to_batch(x,device='cpu'):
     return x[None,None,...].to(device)
 
@@ -40,7 +41,9 @@ def create_dict(keys,values):
     return new_dict
 
 def get_weights(Y):
+    flag=False
     weights=torch.zeros((Y.shape[1]))
+    n=0
     for i in range(Y.shape[1]):
         if len(torch.unique(torch.argmax(Y[:,i,...],0)))>1:
             if not flag: flag=True
@@ -57,10 +60,10 @@ def get_weights(Y):
 
 def propagate_labels(X,Y,model,model_down=None):
     Y2=deepcopy(Y)
-    model.eval()
+    model.eval().to('cuda')
     if model_down==None: model_down=model
     else: model_down.eval()
-
+    X=X[0]
     for i,x1 in enumerate(X):
         try:
             x2=X[i+1]
@@ -80,35 +83,66 @@ def propagate_labels(X,Y,model,model_down=None):
         else:
             y1=Y2[:,i,...]
             if len(torch.unique(torch.argmax(y1,0)))>1 and len(torch.unique(torch.argmax(Y2[:,i-1,...],0)))==1:
-                _,y,_=model.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
+                _,y,_=model_down.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
                 Y2[:,i-1,...]=y.cpu().detach()[0]
     return Y,Y2
 
+def compute_metrics(y_pred,y):
+    dice=monai.metrics.compute_meandice(y_pred, y, include_background=False)
+    hauss=monai.metrics.compute_hausdorff_distance(y_pred, y, include_background=False)
+    asd=monai.metrics.compute_average_surface_distance(y_pred, y, include_background=False)
+    return dice,hauss,asd
 
 def get_dices(Y_dense,Y,Y2,selected_slices):
-    weights=get_weights(remove_annotations(Y_dense,selected_slices))
-    dices_down=[]
+    weights=get_weights(remove_annotations(deepcopy(Y_dense),selected_slices))
     dices_up=[]
+    hauss_up=[]
+    asd_up=[]
+    dices_down=[]
+    hauss_down=[]
+    asd_down=[]
     dices_sum=[]
+    hauss_sum=[]
+    asd_sum=[]
     dices_weighted=[]
+    hauss_weighted=[]
+    asd_weighted=[]
     for i in range(Y.shape[1]):
         if i not in selected_slices and len(torch.unique(torch.argmax(Y_dense[:,i,...],0)))>1:
-            d_up=monai.metrics.compute_meandice(hardmax(Y[:,i,...],0)[None,...], Y_dense[:,i,...][None,...], include_background=False)
-            d_down=monai.metrics.compute_meandice(hardmax(Y2[:,i,...],0)[None,...], Y_dense[:,i,...][None,...], include_background=False)
-            d_sum=monai.metrics.compute_meandice(hardmax(Y[:,i,...]+Y2[:,i,...],0)[None,...], Y_dense[:,i,...][None,...], include_background=False)
-            d_weighted=monai.metrics.compute_meandice(hardmax((1-weights[i])*Y[:,i,...]+weights[i]*Y2[:,i,...],0)[None,...], Y_dense[:,i,...][None,...], include_background=False)
+            d_up,h_up,a_up=compute_metrics(hardmax(Y[:,i,...],0)[None,...], Y_dense[:,i,...][None,...])
+            d_down,h_down,a_down=compute_metrics(hardmax(Y2[:,i,...],0)[None,...], Y_dense[:,i,...][None,...])
+            d_sum,h_sum,a_sum=compute_metrics(hardmax(Y[:,i,...]+Y2[:,i,...],0)[None,...], Y_dense[:,i,...][None,...])
+            d_weighted,h_weighted,a_weighted=compute_metrics(hardmax((1-weights[i])*Y[:,i,...]+weights[i]*Y2[:,i,...],0)[None,...], Y_dense[:,i,...][None,...])
             dices_up.append(d_up)
             dices_down.append(d_down)
             dices_sum.append(d_sum)
             dices_weighted.append(d_weighted)
-    dice_up=torch.nan_to_num(torch.stack(dices_up)).mean()
-    dice_down=torch.nan_to_num(torch.stack(dices_down)).mean()
-    dice_sum=torch.nan_to_num(torch.stack(dices_sum)).mean()
-    dice_weighted=torch.nan_to_num(torch.stack(dices_weighted)).mean()
-    dices=create_dict(['dice_up','dice_down','dice_sum','dice_weighted'],[dice_up,dice_down,dice_sum,dice_weighted])
+            hauss_up.append(h_up)
+            hauss_down.append(h_down)
+            hauss_sum.append(h_sum)
+            hauss_weighted.append(h_weighted)
+            asd_up.append(a_up)
+            asd_down.append(a_down)
+            asd_sum.append(a_sum)
+            asd_weighted.append(a_weighted)
+
+    dice_up=torch.nan_to_num(torch.stack(dices_up)).mean().numpy()
+    dice_down=torch.nan_to_num(torch.stack(dices_down)).mean().numpy()
+    dice_sum=torch.nan_to_num(torch.stack(dices_sum)).mean().numpy()
+    dice_weighted=torch.nan_to_num(torch.stack(dices_weighted)).mean().numpy()
+    hauss_up=torch.nan_to_num(torch.stack(hauss_up)).mean().numpy()
+    hauss_down=torch.nan_to_num(torch.stack(hauss_down)).mean().numpy()
+    hauss_sum=torch.nan_to_num(torch.stack(hauss_sum)).mean().numpy()
+    hauss_weighted=torch.nan_to_num(torch.stack(hauss_weighted)).mean().numpy()
+    asd_up=torch.nan_to_num(torch.stack(asd_up)).mean().numpy()
+    asd_down=torch.nan_to_num(torch.stack(asd_down)).mean().numpy()
+    asd_sum=torch.nan_to_num(torch.stack(asd_sum)).mean().numpy()
+    asd_weighted=torch.nan_to_num(torch.stack(asd_weighted)).mean().numpy()
+    dices=create_dict(['dice_up','dice_down','dice_sum','dice_weighted','hauss_up','hauss_down','hauss_sum','hauss_weighted','asd_up','asd_down','asd_sum','asd_weighted'],[dice_up,dice_down,dice_sum,dice_weighted,hauss_up,hauss_down,hauss_sum,hauss_weighted,asd_up,asd_down,asd_sum,asd_weighted])
     return dices
 
 def get_test_data(data_PARAMS):
+    data_PARAMS=deepcopy(data_PARAMS)
     dataset=data_PARAMS.pop('dataset')
     if dataset=='PLEX':
         dm=PlexDataModule(**data_PARAMS)
@@ -118,7 +152,9 @@ def get_test_data(data_PARAMS):
     X,Y_dense=dm.val_dataloader().dataset[0]
     return X,Y_dense
 
-def train_and_eval(data_PARAMS,model_PARAMS):
+def train_and_eval(data_PARAMS,model_PARAMS,ckpt=None):
+    data_PARAMS=deepcopy(data_PARAMS)
+    model_PARAMS=deepcopy(model_PARAMS)
     dataset=data_PARAMS.pop('dataset')
     if dataset=='PLEX':
         dm=PlexDataModule(**data_PARAMS)
@@ -141,15 +177,19 @@ def train_and_eval(data_PARAMS,model_PARAMS):
     )
     logger=TensorBoardLogger("bench_logs", name="label_prop",log_graph=True)
     model=LabelProp(**model_PARAMS)
-    trainer=Trainer(gpus=1,max_epochs=max_epochs,logger=logger,callbacks=checkpoint_callback)
-    trainer.fit(model,dm)
-    model=model.load_from_checkpoint(checkpoint_callback.best_model_path)
+    if ckpt!=None:
+        model=model.load_from_checkpoint(ckpt,strict=False)
+    else:
+        trainer=Trainer(gpus=1,max_epochs=max_epochs,logger=logger,callbacks=checkpoint_callback)
+        trainer.fit(model,dm)
+        model=model.load_from_checkpoint(checkpoint_callback.best_model_path)
     dm.setup('fit')
     _,Y_dense=dm.val_dataloader().dataset[0]
     dm.setup('test')
     X,Y=dm.test_dataloader().dataset[0]
+    Y=remove_annotations(Y,data_PARAMS['selected_slices']['000'])
     Y_up,Y_down=propagate_labels(X,Y,model)
-    res=get_dices(Y_dense,Y_up,Y_down,data_PARAMS['selected_slices'])
-    res['ckpt']=checkpoint_callback.best_model_path
+    res=get_dices(Y_dense,Y_up,Y_down,data_PARAMS['selected_slices']['000'])
+    res['ckpt']=checkpoint_callback.best_model_path if ckpt==None else ckpt
     return Y_up,Y_down,res
 

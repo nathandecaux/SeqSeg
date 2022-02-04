@@ -31,6 +31,7 @@ class LabelProp(pl.LightningModule):
         else:
             return False
     def norm(self, x):
+        
         if len(x.shape)==4:
             x = kornia.enhance.normalize_min_max(x)
         elif len(x.shape)==3:
@@ -194,11 +195,12 @@ class LabelProp(pl.LightningModule):
             for i in range(Y.shape[2]):
                 if i not in self.selected_slices:
                     Y[:,:,i,...]=Y[:,:,i,...]*0  
-        Y_true=deepcopy(Y)
-        Y2=deepcopy(Y)
+        Y_true=torch.clone(Y)
+        Y2=torch.clone(Y)
         dices=[]
         dices_chunk=[]
         dices_dense=[]
+        dices_dense_down=[]
         chunks=[]
         chunk=[]
         for i in range(X.shape[2]):
@@ -216,7 +218,7 @@ class LabelProp(pl.LightningModule):
             for k,i in enumerate(range(chunk[0],chunk[1])):
                 x=X[:,:,i,...]
                 x2=X[:,:,i+1,...]
-                x1_hat,pos,neg=self.forward(x,x2,registration=True)
+                x1_hat,pos,_=self.forward(x,x2,registration=True)
                 x2_hat,neg,_=self.forward(x2,x,registration=True)
                 pos_seq.append(pos)
                 neg_seq.append(neg)
@@ -227,19 +229,19 @@ class LabelProp(pl.LightningModule):
             for i,pos in enumerate(pos_seq):
                 pos_y=self.apply_trans((Y[:,:,chunk[0]+i,...]),pos,'nearest')
                 Y[:,:,chunk[0]+i+1,...]=pos_y
-
+            
             for i,neg in enumerate(reversed(neg_seq)):
                 neg_y=self.apply_trans((Y2[:,:,chunk[1]-i,...]),neg,'nearest')
-                neg_x=self.apply_trans(X2[:,:,chunk[1]-i,...],neg,'nearest')
+                # neg_x=self.apply_trans(X2[:,:,chunk[1]-i,...],neg,'nearest')
                 Y2[:,:,chunk[1]-i-1,...]=neg_y
-                X2[:,:,chunk[1]-i-1,...]=neg_x
+                # X2[:,:,chunk[1]-i-1,...]=neg_x
 
             if not self.way=='down':
                 dices_chunk.append(monai.metrics.compute_meandice(
-                    self.hardmax(Y[:,:,chunk[1],...],1), Y_true[:,:,chunk[1],...], include_background=False))
+                    self.hardmax(Y[:,:,chunk[1],...],1), Y_dense[:,:,chunk[1],...], include_background=False))
             if not self.way=='up':
                 dices_chunk.append(monai.metrics.compute_meandice(
-                    self.hardmax(Y2[:,:,chunk[0],...],1), Y_true[:,:,chunk[0],...], include_background=False))
+                    self.hardmax(Y2[:,:,chunk[0],...],1), Y_dense[:,:,chunk[0],...], include_background=False))
                 Y=Y2
             # for i,w in enumerate(weights):
             #     Y[:,:,chunk[0]+i,...]*=1-w
@@ -252,14 +254,21 @@ class LabelProp(pl.LightningModule):
             #     neg_y=self.apply_trans(neg_y,neg)
 
         
-        if self.selected_slices!=None:
-            for i in range(X.shape[2]):
-                if i not in self.selected_slices and len(torch.unique(torch.argmax(Y_dense[:,:,i,...],1)))>1:
-                    dice=monai.metrics.compute_meandice(
-                self.hardmax(Y[:,:,i,...],1), Y_dense[:,:,i,...], include_background=False)
-                    dices_dense.append(dice)
-            dices_dense=torch.nan_to_num(torch.stack(dices_dense))
-            print('dices dense',dices_dense.mean())
+        # if self.selected_slices!=None:
+        #     for i in range(X.shape[2]):
+        #         if i not in self.selected_slices and len(torch.unique(torch.argmax(Y[:,:,i,...],1)))>1:
+        #             dice=monai.metrics.compute_meandice(
+        #         self.hardmax(Y[:,:,i,...],1), Y_dense[:,:,i,...], include_background=False)
+        #             dice_down=monai.metrics.compute_meandice(
+        #         self.hardmax(Y2[:,:,i,...],1), Y_dense[:,:,i,...], include_background=False)
+        #             dices_dense.append(dice)
+        #             dices_dense_down.append(dice_down)
+        #     print(dices_dense)
+        #     dices_dense=torch.nan_to_num(torch.stack(dices_dense))
+        #     dices_dense_down=torch.nan_to_num(torch.stack(dices_dense_down))
+
+        #     print('dices dense (up / down)',dices_dense.mean(),dices_dense_down.mean())
+
         dices_chunk = torch.nan_to_num(torch.stack(dices_chunk))
         self.log('val_accuracy', dices_chunk.mean())
         print('dices chunk',dices_chunk.mean())

@@ -4,3 +4,5 @@ tb_logs
 voxelmorph_ckpts
 *.pyc
 settings
+bench_logs
+results.json
