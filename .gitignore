@@ -6,3 +6,5 @@ voxelmorph_ckpts
 settings
 bench_logs
 results.json
+*.xlsx
+*.json

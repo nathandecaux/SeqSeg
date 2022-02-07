@@ -80,9 +80,7 @@ class FullScan(data.Dataset):
         self.Y = torch.from_numpy(self.Y)[None,...]
         if isinstance(shape,int): shape=(shape,shape) 
         self.X,self.Y=self.resample(self.X,self.Y,(224,shape[0],shape[1]))
-        print('shape Y avant resample',self.Y.shape)
         if selected_slices!=None:
-            print(self.Y.shape)
             for i in range(self.Y.shape[1]):
                 if i not in selected_slices:
                     self.Y[:,i,...]=self.Y[:,i,...]*0
@@ -477,7 +475,6 @@ class PlexDataModule(pl.LightningDataModule):
                     types=[self.limb]
                 for type in types:          
                     if idx in self.indices:
-                        print(idx)
                         data_train = (
                         ni.load(join(self.data_dir, f'sub-{idx}/{data}.nii.gz'))).get_fdata()
                         mask_train = (
@@ -486,12 +483,10 @@ class PlexDataModule(pl.LightningDataModule):
                             plex_train[idx][type] = PlexData(
                         data_train, mask_train, mixup=self.mixup, aug=self.aug,lab=self.lab)  # self.aug)
                         else:
-                            print('selected_slices train',self.selected_slices)
                             if idx not in self.selected_slices: selected_slices=None
                             else: selected_slices=self.selected_slices[idx]
                             plex_train[idx][type] = FullScan(
                         data_train, mask_train, mixup=self.mixup,lab=self.lab, aug=self.aug,dim=self.dim,way=self.way,shape=self.shape,selected_slices=selected_slices)  # self.aug)
-                        print(data_train.shape)
                         plex_masks.append(mask_train)
                     if idx in self.indices_val:
                         data_train = (
@@ -513,16 +508,13 @@ class PlexDataModule(pl.LightningDataModule):
                     
             datasets = list()
             datasets_val=list()
-            print(plex_val)
             for idx in self.indices:
                 if self.limb == 'both':
                     datasets.append(ConcatDataset(
                         [plex_train[idx]['H'], plex_train[idx]['P']]))
                 else:
                     datasets.append(plex_train[idx][self.limb])
-            print(self.indices_val)
             for idx in self.indices_val:
-                print(idx)
                 if self.limb == 'both':
                     datasets_val.append(ConcatDataset(
                         [plex_val[idx]['H'], plex_val[idx]['P']]))
@@ -533,13 +525,11 @@ class PlexDataModule(pl.LightningDataModule):
                 masks=torch.from_numpy(np.concatenate(plex_masks,axis=0))
                 masks[masks!=self.lab]=0
                 imgs=torch.cat(plex_unsup,0)
-                print(imgs.shape)
                 test=SemiPlexData(imgs,masks,size=masks.shape[0])
                 # self.sampler=RandomSampler(test,True,num_samples=len(self.indices)*64) 
                 # datasets.append(test)
                 self.plex_train = ConcatDataset(datasets)
-                print(len(self.plex_train)
-                )
+    
                 self.plex_train=GANDataset(self.plex_train,test,imgs.shape[0])
             else:
                 self.plex_train=ConcatDataset(datasets)
@@ -565,7 +555,6 @@ class PlexDataModule(pl.LightningDataModule):
                     if self.dim==2:
                         plex_test[idx][type] = PlexData(data_test, mask_test,lab=self.lab)
                     else:
-                        print('selected slices test')
                         plex_test[idx][type] = FullScan(data_test, mask_test, mixup=self.mixup, aug=self.aug,dim=self.dim,shape=self.shape,lab=self.lab,selected_slices=None)
 
 
