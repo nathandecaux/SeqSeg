@@ -22,12 +22,12 @@ def to_batch(x,device='cpu'):
     return x[None,None,...].to(device)
 
 def hardmax(Y,dim):
-    return torch.moveaxis(F.one_hot(torch.argmax(Y,dim)), -1, dim)
+    return torch.moveaxis(F.one_hot(torch.argmax(Y,dim),11), -1, dim)
 def to_one_hot(Y,dim=1):
     return torch.moveaxis(F.one_hot(Y, 11), -1, dim).float()
-size=(256,256)
+size=(288,288)
 dim=3
-max_epochs=200
+max_epochs=1
 C=1
 dataset='PLEX'
 
@@ -46,16 +46,16 @@ else:
 
 
 dir=f'/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/{dataset}'
-losses={'compo-reg-up':True,'compo-reg-down':False,'compo-dice-up':True,'compo-dice-down':False,'bidir-cons-reg':False,'bidir-cons-dice':False}
+losses={'compo-reg-up':True,'compo-reg-down':True,'compo-dice-up':True,'compo-dice-down':True,'bidir-cons-reg':False,'bidir-cons-dice':True}
 
 ckpt_up=None#'labelprop-up-epoch=150-val_accuracy=0.50[1].ckpt'#"labelprop-up-epoch=92-val_accuracy=0.92[1].ckpt"#'labelprop-up-epoch=139-val_accuracy=1.00[0, 1].ckpt'#'labelprop-up-epoch=145-val_accuracy=0.98[0, 1].ckpt'
 resume_ckpt=None#'labelprop-up-epoch=145-val_accuracy=0.98[0, 1].ckpt'
 ckpt_down='labelprop-up-epoch=150-val_accuracy=0.50[1].ckpt'#'labelprop-up-epoch=97-val_accuracy=0.84[1].ckpt'
-selected_slices=[107,160,199]#+list(range(101,185))[::2]#+[156]+[185]
-data_PARAMS = {'batch_size':1,'subject_ids': [0], 'val_ids': [0], 'test_ids': [0],'aug':True,'dim':dim,'shape':size,'lab':1,'selected_slices':{'000':selected_slices,'002':None}}
+selected_slices=[107,199]#+list(range(80))[::10]#[107,160,199]#+list(range(101,185))[::2]#+[156]+[185]
+data_PARAMS = {'batch_size':1,'subject_ids': [0], 'val_ids': [0], 'test_ids': [0],'aug':True,'dim':dim,'shape':size,'selected_slices':{'000':selected_slices}}
 dm=DMDDataModule(**data_PARAMS,way='up')
 logger=TensorBoardLogger("tb_logs", name="label_prop",log_graph=True)
-model_up=LabelProp(way='down',dim=dim,size=size,selected_slices=selected_slices,losses=losses)
+model_up=LabelProp(n_classes=2,way='both',dim=dim,size=size,selected_slices=selected_slices,losses=losses)
 
 checkpoint_callback_up = ModelCheckpoint(
         monitor='val_accuracy',

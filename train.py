@@ -6,6 +6,7 @@ from datetime import datetime
 from kornia.geometry import ImageRegistrator
 from soupsieve import select
 from models.LabelProp import LabelProp
+from models.UNet import UNet
 import torch
 import numpy as np
 import nibabel as ni
@@ -19,13 +20,14 @@ import monai
 from data.CleanDataModule import PlexDataModule
 from data.DMDDataModule import DMDDataModule
 from copy import copy,deepcopy
+import medpy.metric as med
 max_epochs=200
 
 def to_batch(x,device='cpu'):
     return x[None,None,...].to(device)
 
 def hardmax(Y,dim):
-    return torch.moveaxis(F.one_hot(torch.argmax(Y,dim)), -1, dim)
+    return torch.moveaxis(F.one_hot(torch.argmax(Y,dim),11), -1, dim)
 
 def remove_annotations(Y,selected_slices):
     if selected_slices!=None:
@@ -88,10 +90,38 @@ def propagate_labels(X,Y,model,model_down=None):
     return Y,Y2
 
 def compute_metrics(y_pred,y):
-    dice=monai.metrics.compute_meandice(y_pred, y, include_background=False)
-    hauss=monai.metrics.compute_hausdorff_distance(y_pred, y, include_background=False)
-    asd=monai.metrics.compute_average_surface_distance(y_pred, y, include_background=False)
-    return dice,hauss,asd
+    dices=[]
+    hausses=[]
+    asds=[]
+    for c in range(y.shape[1]):
+        if len(torch.unique(y[:,c,...]))>1 and c>0:
+            dice=monai.metrics.compute_meandice(y_pred[:,c:c+1,...], y[:,c:c+1,...], include_background=False)
+            dices.append(dice)
+
+            # if len(torch.unique(y_pred[:,c,...]))>1:
+    if len(torch.unique(torch.argmax(y,1)))>1:
+        if len(torch.unique(torch.argmax(y_pred,1)))>1:
+            hauss=med.hd(torch.argmax(y_pred,1).numpy()>0,torch.argmax(y,1).numpy()>0)
+            asd=med.asd(torch.argmax(y_pred,1).numpy()>0, torch.argmax(y,1).numpy()>0)
+        # else:
+        #     hauss=100
+        #     asd=100
+    # hausses.append(hauss)
+    # asds.append(asd)  
+            # else:
+            #     hausses.append(hauss)
+            #     asds.append(asd)            
+
+    dices=torch.stack(dices).mean()
+    # if len(hausses)>0:
+    #     hausses=np.mean(np.array(hausses))
+    #     print(hausses)
+
+    #     asds=np.mean(np.array(asds))
+    # else: 
+    #     hausses=None
+    #     asds=None
+    return dices,hauss,asd
 
 def get_dices(Y_dense,Y,Y2,selected_slices):
     weights=get_weights(remove_annotations(deepcopy(Y_dense),selected_slices))
@@ -130,14 +160,14 @@ def get_dices(Y_dense,Y,Y2,selected_slices):
     dice_down=torch.nan_to_num(torch.stack(dices_down)).mean().numpy()
     dice_sum=torch.nan_to_num(torch.stack(dices_sum)).mean().numpy()
     dice_weighted=torch.nan_to_num(torch.stack(dices_weighted)).mean().numpy()
-    hauss_up=torch.nan_to_num(torch.stack(hauss_up)).mean().numpy()
-    hauss_down=torch.nan_to_num(torch.stack(hauss_down)).mean().numpy()
-    hauss_sum=torch.nan_to_num(torch.stack(hauss_sum)).mean().numpy()
-    hauss_weighted=torch.nan_to_num(torch.stack(hauss_weighted)).mean().numpy()
-    asd_up=torch.nan_to_num(torch.stack(asd_up)).mean().numpy()
-    asd_down=torch.nan_to_num(torch.stack(asd_down)).mean().numpy()
-    asd_sum=torch.nan_to_num(torch.stack(asd_sum)).mean().numpy()
-    asd_weighted=torch.nan_to_num(torch.stack(asd_weighted)).mean().numpy()
+    hauss_up=np.mean(np.array(hauss_up))
+    hauss_down=np.mean(np.array(hauss_down))
+    hauss_sum=np.mean(np.array(hauss_sum))
+    hauss_weighted=np.mean(np.array(hauss_weighted))
+    asd_up=np.mean(np.array(asd_up))
+    asd_down=np.mean(np.array(asd_down))
+    asd_sum=np.mean(np.array(asd_sum))
+    asd_weighted=np.mean(np.array(asd_weighted))
     dices=create_dict(['dice_up','dice_down','dice_sum','dice_weighted','hauss_up','hauss_down','hauss_sum','hauss_weighted','asd_up','asd_down','asd_sum','asd_weighted'],[dice_up,dice_down,dice_sum,dice_weighted,hauss_up,hauss_down,hauss_sum,hauss_weighted,asd_up,asd_down,asd_sum,asd_weighted])
     return dices
 
@@ -156,6 +186,10 @@ def train_and_eval(data_PARAMS,model_PARAMS,ckpt=None):
     data_PARAMS=deepcopy(data_PARAMS)
     model_PARAMS=deepcopy(model_PARAMS)
     dataset=data_PARAMS.pop('dataset')
+    try :
+        model_name=model_PARAMS.pop('model_name')
+    except:
+        model_name=None
     if dataset=='PLEX':
         dm=PlexDataModule(**data_PARAMS)
         model_PARAMS['n_classes']=2
@@ -176,20 +210,24 @@ def train_and_eval(data_PARAMS,model_PARAMS,ckpt=None):
         mode='max',
     )
     logger=TensorBoardLogger("bench_logs", name="label_prop",log_graph=True)
-    model=LabelProp(**model_PARAMS)
+    if model_name=='UNet':
+        model=UNet(**model_PARAMS)
+    else:
+        model=LabelProp(**model_PARAMS)
     if ckpt!=None:
         model=model.load_from_checkpoint(ckpt,strict=False)
     else:
         trainer=Trainer(gpus=1,max_epochs=max_epochs,logger=logger,callbacks=checkpoint_callback)
         trainer.fit(model,dm)
+        #print(checkpoint_callback.best_model_path)
         model=model.load_from_checkpoint(checkpoint_callback.best_model_path)
     dm.setup('fit')
     _,Y_dense=dm.val_dataloader().dataset[0]
     dm.setup('test')
     X,Y=dm.test_dataloader().dataset[0]
-    Y=remove_annotations(Y,data_PARAMS['selected_slices']['000'])
+    Y=remove_annotations(Y,data_PARAMS['selected_slices']['17'])
     Y_up,Y_down=propagate_labels(X,Y,model)
-    res=get_dices(Y_dense,Y_up,Y_down,data_PARAMS['selected_slices']['000'])
+    res=get_dices(Y_dense,Y_up,Y_down,data_PARAMS['selected_slices']['17'])
     res['ckpt']=checkpoint_callback.best_model_path if ckpt==None else ckpt
     return Y_up,Y_down,res
 

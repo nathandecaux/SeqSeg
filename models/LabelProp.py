@@ -150,10 +150,9 @@ class LabelProp(pl.LightningModule):
                     x1_hat_f,pos,neg=self.forward(x,x2)
                     loss_up.append(self.compute_loss(x1_hat_f,x2,trans=pos))
                     pos_seq.append(pos)
-                else:
-                    x2_hat_b,neg,_=self.forward(x2,x)#
 
                 if not self.way=='up':
+                    x2_hat_b,neg,_=self.forward(x2,x)#
                     neg_seq.append(neg)
                     x2_hat_b=self.registrator.transformer(x2,neg)
                     loss_down.append(self.compute_loss(x2_hat_b,x,trans=neg))
@@ -288,7 +287,7 @@ class LabelProp(pl.LightningModule):
         #         self.hardmax(Y2[:,:,i,...],1), Y_dense[:,:,i,...], include_background=False)
         #             dices_dense.append(dice)
         #             dices_dense_down.append(dice_down)
-        #     print(dices_dense)
+        #     # print(dices_dense)
         #     dices_dense=torch.nan_to_num(torch.stack(dices_dense))
         #     dices_dense_down=torch.nan_to_num(torch.stack(dices_dense_down))
 
@@ -308,7 +307,7 @@ class LabelProp(pl.LightningModule):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay,amsgrad=True)
 
     def hardmax(self,Y,dim):
-        return torch.moveaxis(F.one_hot(torch.argmax(Y,dim)), -1, dim)
+        return torch.moveaxis(F.one_hot(torch.argmax(Y,dim),self.n_classes), -1, dim)
 def dice(res, gt, label): 
     A = gt == label
     B = res == label    

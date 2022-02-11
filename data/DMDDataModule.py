@@ -115,11 +115,12 @@ class PlexDataVolume(data.Dataset):
         return x
 
 class FullScan(data.Dataset):
-    def __init__(self, X, Y,lab=1, mixup=0, aug=False,dim=3,way='up',shape=256):
+    def __init__(self, X, Y,lab='all', mixup=0, aug=False,dim=3,way='up',shape=256,selected_slices=None):
 
         self.X = X.astype('float32')
-        # Y= 1.*(Y==lab)
         Y[Y==11]=10
+        if isinstance(lab,int):
+            Y= 1.*(Y==lab)
         self.Y=Y
         self.dim=dim
         # idx_2_del=[]
@@ -131,11 +132,15 @@ class FullScan(data.Dataset):
         #     self.Y=np.delete(self.Y,i-count,0)
         self.X = self.norm(torch.from_numpy(self.X))[None,...]
         self.Y = torch.from_numpy(self.Y)[None,...]
-        self.X,self.Y=self.resample(self.X,self.Y,(80,shape,shape))
-        self.Y=torch.moveaxis(func.one_hot(self.Y.long(), 11), -1, 1).float()
+        if isinstance(shape,int): shape=(shape,shape) 
+        self.X,self.Y=self.resample(self.X,self.Y,(80,shape[0],shape[1]))
+        if selected_slices!=None:
+            for i in range(self.Y.shape[1]):
+                if i not in selected_slices:
+                    self.Y[:,i,...]=self.Y[:,i,...]*0
+        self.Y=torch.moveaxis(func.one_hot(self.Y.long()), -1, 1).float()
         self.aug = aug
         self.way=way
-        print('Pouet')
         self.mixup = mixup
 
     def __getitem__(self, index):
@@ -167,7 +172,6 @@ class FullScan(data.Dataset):
             x = self.X[index]
             y = self.Y[index]
             return x.unsqueeze(0), y
-    
     def resample(self,X,Y,size):
         X=func.interpolate(X[None,...],size,mode='trilinear',align_corners=True)[0]
         Y=func.interpolate(Y[None,...],size,mode='nearest')[0]
@@ -308,9 +312,9 @@ class SemiPlexData(data.Dataset):
 
 
 class DMDDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir: str = '/mnt/Data/PLEX/datasets/bids/', supervised=True, subject_ids='all',val_ids=[1],test_ids=[1], limb='both', batch_size=8, mixup=0, aug=False,interpolate=False, disentangled=False,dim=2,way='up',register=False,shape=256):
+    def __init__(self, data_dir: str = '/mnt/Data/PLEX/datasets/bids/', supervised=True, subject_ids='all',val_ids=[1],test_ids=[1], limb='both', batch_size=8, mixup=0, aug=False,interpolate=False, disentangled=False,dim=2,way='up',register=False,shape=256,selected_slices=None):
         super().__init__()
-        self.data_dir = '/mnt/freebox/Segmentations'
+        self.data_dir = '/home/nathan/Datasets/DMD/'
         if subject_ids == 'all':
             subject_ids = range(2, 12)
         indices = []
@@ -331,6 +335,8 @@ class DMDDataModule(pl.LightningDataModule):
         self.dim=dim
         self.shape=shape
         self.way=way        
+        self.selected_slices=selected_slices
+
         self.register=register
     def setup(self, stage=None):
         plex_train=[]
@@ -358,9 +364,12 @@ class DMDDataModule(pl.LightningDataModule):
                 if False:#self.dim==2:
                     plex_train.append(PlexData(
                         data_train, mask_train, mixup=self.mixup, aug=self.aug))  # self.aug)
-                else:
+                else: 
+                    if idx not in self.selected_slices: selected_slices=None
+                    else: selected_slices=self.selected_slices[idx]
+                    print('waohou',selected_slices)
                     plex_train.append(FullScan(
-                        data_train, mask_train, mixup=self.mixup, aug=self.aug,dim=self.dim,way=self.way,shape=self.shape))  # self.aug)
+                        data_train, mask_train, mixup=self.mixup, aug=self.aug,dim=self.dim,way=self.way,shape=self.shape,selected_slices=selected_slices))  # self.aug)
             for idx in self.val_ids:
                 idx=str(idx)
                 idx2=str(idx).zfill(2)
@@ -370,6 +379,7 @@ class DMDDataModule(pl.LightningDataModule):
                 
                 mask_train = (
                     ni.load(join(self.data_dir, f'sub-{idx2}/ses-01/anat/seg.nii.gz'))).get_fdata()
+                mask_train[mask_train==11]=10
                 # data_train=data_train[160:320,90:220,:]
                 # print(mask_train.shape)
                 # mask_train=mask_train[160:320,90:220,:]
@@ -409,6 +419,8 @@ class DMDDataModule(pl.LightningDataModule):
                 # mask_train=mask_train[160:320,90:220,:]
                 data_train=np.moveaxis(data_train,-1,0)
                 mask_train=np.moveaxis(mask_train,-1,0)
+                mask_train[mask_train==11]=10
+
                 if self.dim==2:
                     plex_test.append(PlexDataVolume(
                         data_train, mask_train))  # self.aug)
