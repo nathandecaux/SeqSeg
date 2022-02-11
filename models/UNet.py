@@ -45,26 +45,34 @@ class UNet(pl.LightningModule):
         self.segmentor= BaseUNet(1,self.n_classes)
         #self.segmentor=monai.networks.nets.BasicUNet(2,1,self.n_classes)
         self.selected_slices=selected_slices
-        print('n_classes',self.n_classes)
+        print('lr',self.learning_rate)
         self.save_hyperparameters()
     def forward(self, x):
         sx=self.segmentor(x)
         return {'sx':sx}
 
+    def spatial(self,x,y):
+        trans = K.AugmentationSequential(K.RandomAffine(degrees=[-20,20], scale=[0.8,1.2],shear=[-20,20], resample="nearest", p=0.9), data_keys=["input", "mask"])
+        x,y=trans(x,y)
+        return x,y    
+
     def training_step(self, batch, batch_nb):
         X,Y=batch
         y_opt=self.optimizers()
+        losses=[]
         for i in range(X.shape[2]):
             x=X[:,:,i,...]
             y=Y[:,:,i,...]
             if len(torch.unique(torch.argmax(y,1)))>1:
                 y_opt.zero_grad()
+                x,y=self.spatial(x, y)
                 y_hat=self.forward(x)['sx']
-                loss=Dice().loss(y_hat,y.long())
+                loss=nn.CrossEntropyLoss()(y_hat,torch.argmax(y,1))
                 self.manual_backward(loss)
                 y_opt.step()
                 self.log('train_loss', loss)
-                loss=0
+                losses.append(loss)
+        print(len(losses),torch.stack(losses).mean())
         self.log('val_accuracy',self.current_epoch)
         # return loss
 
@@ -139,12 +147,12 @@ class UNet(pl.LightningModule):
     #         accuracies[f"test_accuracy_lab{lab}"] = mean
     #     return accuracies
     def register_images(self,x,x2,y):
-        x2=None
+        x=None
         y=None
-        y_hat=self.forward(x)['sx']
+        y_hat=self.forward(x2)['sx']
         return None,y_hat,None
     def configure_optimizers(self):
-        return torch.optim.Adam(filter(lambda p: p.requires_grad, self.parameters()), lr=self.learning_rate, weight_decay=self.weight_decay)
+        return torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
 
 def dice(res, gt, label): 
     A = gt == label

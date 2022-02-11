@@ -21,7 +21,10 @@ from data.CleanDataModule import PlexDataModule
 from data.DMDDataModule import DMDDataModule
 from copy import copy,deepcopy
 import medpy.metric as med
+from torch.nn.functional import interpolate
 max_epochs=200
+
+    
 
 def to_batch(x,device='cpu'):
     return x[None,None,...].to(device)
@@ -63,9 +66,12 @@ def get_weights(Y):
 def propagate_labels(X,Y,model,model_down=None):
     Y2=deepcopy(Y)
     model.eval().to('cuda')
+    model.freeze()
     if model_down==None: model_down=model
     else: model_down.eval()
     X=X[0]
+    count_up=0
+    count_down=0
     for i,x1 in enumerate(X):
         try:
             x2=X[i+1]
@@ -76,6 +82,7 @@ def propagate_labels(X,Y,model,model_down=None):
             if len(torch.unique(torch.argmax(Y[:,i+1,...],0)))==1 and len(torch.unique(torch.argmax(y1,0)))>1:
                 _,y,_=model.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
                 Y[:,i+1,...]=y.cpu().detach()[0]
+                count_up+=1
     for i in range(X.shape[0]-1,1,-1):
         x1=X[i]
         try:
@@ -87,6 +94,8 @@ def propagate_labels(X,Y,model,model_down=None):
             if len(torch.unique(torch.argmax(y1,0)))>1 and len(torch.unique(torch.argmax(Y2[:,i-1,...],0)))==1:
                 _,y,_=model_down.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
                 Y2[:,i-1,...]=y.cpu().detach()[0]
+                count_down+=1
+    print('counts',count_up,count_down)
     return Y,Y2
 
 def compute_metrics(y_pred,y):
@@ -95,15 +104,16 @@ def compute_metrics(y_pred,y):
     asds=[]
     for c in range(y.shape[1]):
         if len(torch.unique(y[:,c,...]))>1 and c>0:
-            dice=monai.metrics.compute_meandice(y_pred[:,c:c+1,...], y[:,c:c+1,...], include_background=False)
-            dices.append(dice)
-
-            # if len(torch.unique(y_pred[:,c,...]))>1:
+            if len(torch.unique(y_pred[:,c,...]))>1:
+                dice=monai.metrics.compute_meandice(y_pred[:,c:c+1,...], y[:,c:c+1,...], include_background=False)
+                dices.append(dice[0])
+            else:
+                dices.append(torch.from_numpy(np.array([0.])))
+            
     if len(torch.unique(torch.argmax(y,1)))>1:
         if len(torch.unique(torch.argmax(y_pred,1)))>1:
             hauss=med.hd(torch.argmax(y_pred,1).numpy()>0,torch.argmax(y,1).numpy()>0)
             asd=med.asd(torch.argmax(y_pred,1).numpy()>0, torch.argmax(y,1).numpy()>0)
-        # else:
         #     hauss=100
         #     asd=100
     # hausses.append(hauss)
@@ -212,22 +222,50 @@ def train_and_eval(data_PARAMS,model_PARAMS,ckpt=None):
     logger=TensorBoardLogger("bench_logs", name="label_prop",log_graph=True)
     if model_name=='UNet':
         model=UNet(**model_PARAMS)
+    elif model_name=='Interp':
+        model=PropByInterp()
     else:
         model=LabelProp(**model_PARAMS)
-    if ckpt!=None:
-        model=model.load_from_checkpoint(ckpt,strict=False)
-    else:
-        trainer=Trainer(gpus=1,max_epochs=max_epochs,logger=logger,callbacks=checkpoint_callback)
-        trainer.fit(model,dm)
-        #print(checkpoint_callback.best_model_path)
-        model=model.load_from_checkpoint(checkpoint_callback.best_model_path)
+    if model_name != 'Interp':
+        if ckpt!=None:
+            model=model.load_from_checkpoint(ckpt,strict=False)
+        else:
+            trainer=Trainer(gpus=1,max_epochs=max_epochs,logger=logger,callbacks=checkpoint_callback)
+            trainer.fit(model,dm)
+            #print(checkpoint_callback.best_model_path)
+            model=model.load_from_checkpoint(checkpoint_callback.best_model_path)
     dm.setup('fit')
     _,Y_dense=dm.val_dataloader().dataset[0]
     dm.setup('test')
     X,Y=dm.test_dataloader().dataset[0]
     Y=remove_annotations(Y,data_PARAMS['selected_slices']['17'])
-    Y_up,Y_down=propagate_labels(X,Y,model)
+    if model_name != 'Interp':
+        Y_up,Y_down=propagate_labels(X,Y,model)
+    else:
+        Y_up=model(Y)
+        Y_down=Y_up
     res=get_dices(Y_dense,Y_up,Y_down,data_PARAMS['selected_slices']['17'])
     res['ckpt']=checkpoint_callback.best_model_path if ckpt==None else ckpt
     return Y_up,Y_down,res
+
+class PropByInterp(torch.nn.Module):
+    def __init__(self, mode='nearest'):
+        super(PropByInterp,self).__init__()
+        self.mode=mode
+    def forward(self, Y):
+        Y_cut=[]
+        start=-1
+        end=-1
+        for i in range(Y.shape[1]):
+            y=Y[:,i,...]
+            if len(torch.unique(torch.argmax(y,0)))>1:
+                if start==-1 : start=i
+                end=i
+                Y_cut.append(y)
+        Y_cut=torch.stack(Y_cut,1)
+        shape=list(np.array(Y.shape))[1:]
+        shape[0]=end+1-start
+        Y_cut=interpolate(Y_cut.unsqueeze(0),shape,mode=self.mode).squeeze(0)
+        Y[:,start:end+1,...]=Y_cut
+        return Y
 

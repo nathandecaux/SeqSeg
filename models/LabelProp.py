@@ -41,7 +41,7 @@ class LabelProp(pl.LightningModule):
         return x
     
 
-    def __init__(self,n_channels=1,n_classes=2,learning_rate=1e-3,weight_decay=1e-8,taa=False,ckpt=None,way='up',dim=3,size=256,selected_slices=None,losses={}):
+    def __init__(self,n_channels=1,n_classes=2,learning_rate=1e-4,weight_decay=1e-8,taa=False,ckpt=None,way='up',dim=3,size=256,selected_slices=None,losses={}):
         super().__init__()
         self.n_classes = n_classes
         self.learning_rate=learning_rate
