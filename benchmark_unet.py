@@ -19,6 +19,14 @@ import monai
 import json
 import pandas as pd
 from train import *
+def new_nii(X,type='float32'):
+    affine=np.eye(4)
+    if dataset=='PLEX':
+        affine[0,0]=5/3
+    else:
+        affine[0,0]=5
+    return ni.Nifti1Image(np.array(X).astype(type),affine)
+
 def is_already_done(file,res):
     if len(file)==0:
         return False
@@ -37,11 +45,11 @@ def save_json(results,f):
         json.dump(results,f, cls=NumpyArrayEncoder)
 
 
-size=(288,288)
+size=(256,256)
 
-dataset='DMD'
+dataset='PLEX'
 
-data_PARAMS = {'dataset':dataset,'batch_size':1,'subject_ids': [17], 'val_ids': [17], 'test_ids': [17],'aug':True,'dim':3,'shape':size}
+data_PARAMS = {'dataset':dataset,'batch_size':1,'subject_ids': [0], 'val_ids': [0], 'test_ids': [0],'aug':True,'dim':3,'shape':size}
 model_PARAMS= {'model_name':'UNet'}
 
 
@@ -55,25 +63,34 @@ except:
 if dataset not in results.keys():
     results[dataset]=dict()
 slices=dict()
-for r in [46]:
-    if str(r) not in results[dataset].keys():
-        ratio=str(r)
-        selected_slices=[21,67]
-        # selected_slices+=list(range(80))[::2]
-        # if r%2==0:
-        #     selected_slices+=list(range(80))[1::r]
-        # else:
-        #     selected_slices+=list(range(80))[::r]
-        slices[r]=selected_slices
+for r in [5]:
+    ratio=str(r)
+    #selected_slices=[107, 199, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170, 175, 180, 185, 190, 195, 200, 205, 210, 215, 220]
+    selected_slices=[107,153,199]#[107, 199, 0, 40, 80, 120, 160, 200]#[107,153,199]
+    # if r%2==0:
+    #     selected_slices+=list(range(224))[::r]
+    # else:
+    #     selected_slices+=list(range(224))[::r]
+   
+    slices[r]=selected_slices
+    if ratio not in results[dataset].keys():
+        print('noon')
+        results[dataset][ratio]=[]
+    model_PARAMS['selected_slices']=selected_slices
+    data_PARAMS['selected_slices']={'000':selected_slices}
+    res=dict()
+    preds=dict()
+    Y_up,Y_down,res_train=train_and_eval(data_PARAMS,model_PARAMS,ckpt="/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=199-val_accuracy=199.00-14022022-104802.ckpt")#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=199-val_accuracy=199.00-22022022-141950.ckpt")
+    print(Y_up.shape)
+    Y_fused=torch.argmax((1-res_train['weights']).T*torch.moveaxis(Y_up,1,-1)+(res_train['weights']).T*torch.moveaxis(Y_down,1,-1),0)
+    Y_fused=new_nii(torch.moveaxis(Y_fused,-1,0).cpu().detach().numpy()[107:200],'uint8')
+    ni.save(Y_fused,'Y_UNet.nii.gz')
 
 
-        data_PARAMS['selected_slices']={'17':selected_slices}
-        res=dict()
-        preds=dict()
-        Y_up,Y_down,res_train=train_and_eval(data_PARAMS,model_PARAMS)
-        res.update(res_train)
-        results[dataset][ratio]=deepcopy(res)
-        save_json(results,f)
+    
+    # res.update(res_train)
+    # results[dataset][ratio].append(deepcopy(res))
+    # save_json(results,f)
 
 
 # ckpt_up=None#'labelprop-up-epoch=150-val_accuracy=0.50[1].ckpt'#"labelprop-up-epoch=92-val_accuracy=0.92[1].ckpt"#'labelprop-up-epoch=139-val_accuracy=1.00[0, 1].ckpt'#'labelprop-up-epoch=145-val_accuracy=0.98[0, 1].ckpt'

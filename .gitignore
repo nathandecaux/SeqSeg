@@ -9,3 +9,7 @@ results.json
 *.xlsx
 *.json
 *.png
+*.pdf
+*.tex
+*.ipynb
+benchmark*.py

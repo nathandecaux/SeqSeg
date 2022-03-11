@@ -79,11 +79,19 @@ class FullScan(data.Dataset):
         self.X = self.norm(torch.from_numpy(self.X))[None,...]
         self.Y = torch.from_numpy(self.Y)[None,...]
         if isinstance(shape,int): shape=(shape,shape) 
-        self.X,self.Y=self.resample(self.X,self.Y,(224,shape[0],shape[1]))
+        self.X,self.Y=self.resample(self.X,self.Y,(self.Y.shape[1],shape[0],shape[1]))
         if selected_slices!=None:
+            if selected_slices=='bench':
+                annotated=[]
+                for i in range(self.Y.shape[1]):
+                    if len(torch.unique(self.Y[:,i,...]))>1:
+                        annotated.append(i)
+                median=int(len(annotated)/2)
+                selected_slices=[annotated[1],annotated[median],annotated[-2]]
             for i in range(self.Y.shape[1]):
                 if i not in selected_slices:
                     self.Y[:,i,...]=self.Y[:,i,...]*0
+        self.selected_slices=selected_slices
         self.Y=torch.moveaxis(func.one_hot(self.Y.long()), -1, 1).float()
         self.aug = aug
         self.way=way
@@ -417,7 +425,7 @@ class InteractionData(data.Dataset):
 
 
 class PlexDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir: str = '/home/nathan/Datasets/PLEX/bids/norm',lab=1, supervised=True, subject_ids='all',test_ids=[],val_ids=[], limb='H', batch_size=8, mixup=0, aug=False,interpolate=False,dim=2,way='up',shape=(288,288),selected_slices=None):
+    def __init__(self, data_dir: str = '/home/nathan/PLEX/norm',lab=1, supervised=True, subject_ids='all',test_ids=[],val_ids=[], limb='H', batch_size=8, mixup=0, aug=False,interpolate=False,dim=2,way='up',shape=(288,288),selected_slices=None):
         super().__init__()
         self.data_dir = data_dir
         if subject_ids == 'all':

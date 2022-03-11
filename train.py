@@ -22,9 +22,13 @@ from data.DMDDataModule import DMDDataModule
 from copy import copy,deepcopy
 import medpy.metric as med
 from torch.nn.functional import interpolate
+from scipy.spatial.distance import directed_hausdorff
+import itk
+import ants
 max_epochs=200
 
-    
+def to_one_hot(Y,dim=0):
+    return torch.moveaxis(F.one_hot(Y), -1, dim).float()
 
 def to_batch(x,device='cpu'):
     return x[None,None,...].to(device)
@@ -114,6 +118,9 @@ def compute_metrics(y_pred,y):
         if len(torch.unique(torch.argmax(y_pred,1)))>1:
             hauss=med.hd(torch.argmax(y_pred,1).numpy()>0,torch.argmax(y,1).numpy()>0)
             asd=med.asd(torch.argmax(y_pred,1).numpy()>0, torch.argmax(y,1).numpy()>0)
+        else:
+            hauss=torch.sqrt(torch.tensor(y.shape[-1]^2+y.shape[-2]^2))
+            asd=torch.sqrt(torch.tensor(y.shape[-1]^2+y.shape[-2]^2))
         #     hauss=100
         #     asd=100
     # hausses.append(hauss)
@@ -178,7 +185,7 @@ def get_dices(Y_dense,Y,Y2,selected_slices):
     asd_down=np.mean(np.array(asd_down))
     asd_sum=np.mean(np.array(asd_sum))
     asd_weighted=np.mean(np.array(asd_weighted))
-    dices=create_dict(['dice_up','dice_down','dice_sum','dice_weighted','hauss_up','hauss_down','hauss_sum','hauss_weighted','asd_up','asd_down','asd_sum','asd_weighted'],[dice_up,dice_down,dice_sum,dice_weighted,hauss_up,hauss_down,hauss_sum,hauss_weighted,asd_up,asd_down,asd_sum,asd_weighted])
+    dices=create_dict(['weights','dice_up','dice_down','dice_sum','dice_weighted','hauss_up','hauss_down','hauss_sum','hauss_weighted','asd_up','asd_down','asd_sum','asd_weighted'],[weights,dice_up,dice_down,dice_sum,dice_weighted,hauss_up,hauss_down,hauss_sum,hauss_weighted,asd_up,asd_down,asd_sum,asd_weighted])
     return dices
 
 def get_test_data(data_PARAMS):
@@ -221,9 +228,11 @@ def train_and_eval(data_PARAMS,model_PARAMS,ckpt=None):
     )
     logger=TensorBoardLogger("bench_logs", name="label_prop",log_graph=True)
     if model_name=='UNet':
+        print('Using UNet')
         model=UNet(**model_PARAMS)
-    elif model_name=='Interp':
-        model=PropByInterp()
+    elif 'interp' in model_name.lower():
+        print('Using Interpolation')
+        model=PropByInterp(model_PARAMS['mode'])
     else:
         model=LabelProp(**model_PARAMS)
     if model_name != 'Interp':
@@ -238,13 +247,13 @@ def train_and_eval(data_PARAMS,model_PARAMS,ckpt=None):
     _,Y_dense=dm.val_dataloader().dataset[0]
     dm.setup('test')
     X,Y=dm.test_dataloader().dataset[0]
-    Y=remove_annotations(Y,data_PARAMS['selected_slices']['17'])
+    Y=remove_annotations(Y,model_PARAMS['selected_slices'])
     if model_name != 'Interp':
         Y_up,Y_down=propagate_labels(X,Y,model)
     else:
         Y_up=model(Y)
         Y_down=Y_up
-    res=get_dices(Y_dense,Y_up,Y_down,data_PARAMS['selected_slices']['17'])
+    res=get_dices(Y_dense,Y_up,Y_down,model_PARAMS['selected_slices'])
     res['ckpt']=checkpoint_callback.best_model_path if ckpt==None else ckpt
     return Y_up,Y_down,res
 
@@ -253,19 +262,53 @@ class PropByInterp(torch.nn.Module):
         super(PropByInterp,self).__init__()
         self.mode=mode
     def forward(self, Y):
-        Y_cut=[]
-        start=-1
-        end=-1
-        for i in range(Y.shape[1]):
-            y=Y[:,i,...]
-            if len(torch.unique(torch.argmax(y,0)))>1:
-                if start==-1 : start=i
-                end=i
-                Y_cut.append(y)
-        Y_cut=torch.stack(Y_cut,1)
-        shape=list(np.array(Y.shape))[1:]
-        shape[0]=end+1-start
-        Y_cut=interpolate(Y_cut.unsqueeze(0),shape,mode=self.mode).squeeze(0)
-        Y[:,start:end+1,...]=Y_cut
+        if self.mode=='morph':
+            print('Using morphological contour interpolation')
+            Y_cut=deepcopy(Y)
+            moving_label=itk.GetImageFromArray(np.array(torch.argmax(Y_cut,0).numpy()).astype('uint8'))
+            Y_cut=itk.morphological_contour_interpolator(moving_label)
+            Y_cut=torch.from_numpy(itk.array_from_image(Y_cut))
+            Y_cut=to_one_hot(Y_cut.long())
+            Y=Y_cut
+        else:
+            Y_cut=[]
+            start=-1
+            end=-1
+            for i in range(Y.shape[1]):
+                y=Y[:,i,...]
+                if len(torch.unique(torch.argmax(y,0)))>1:
+                    if start==-1 : start=i
+                    end=i
+                    Y_cut.append(y)
+            Y_cut=torch.stack(Y_cut,1)
+            shape=list(np.array(Y.shape))[1:]
+            shape[0]=end+1-start
+            Y_cut=interpolate(Y_cut.unsqueeze(0),shape,mode=self.mode).squeeze(0)
+            Y[:,start:end+1,...]=Y_cut
         return Y
 
+# class AntsReg(torch.nn.Module):
+#     def __init__(self, mode='nearest'):
+#         super(PropByInterp,self).__init__()
+#         self.mode=mode
+#     def forward(self,moving_image,fixed_image,moving_label):
+#         """
+#         Args:
+#             moving_image ([Tensor]): 1x1xHxW
+#             fixed_image ([Tensor]): 1x1xHxW
+#             moving_label ([Tensor]): 1x11xHxW
+#         Returns:
+#             [type]: [description]
+#         """        
+
+#         moving_label=itk.GetImageFromArray(np.array(moving_label.numpy()[0]).astype('uint8'))
+#         moved_label=np.swapaxes(itk.array_from_image(moving_label),-1,0)
+#         moved_image=ants.from_numpy(moving_image[0])
+#         moved_label=ants.from_numpy(moved_label).astype('uint8') 
+#         fixed_image=ants.from_numpy(fixed_image)
+#         # moved_label=np.array(moving_label).reshape(moving_image.shape)
+#         mytx = ants.registration(fixed=fixed_image , moving=moved_image, type_of_transform='AffineFast' )
+#         moved_image=ants.apply_transforms(fixed=fixed_image, moving=moved_image,transformlist=mytx['fwdtransforms'])
+#         moved_label=ants.apply_transforms(fixed=fixed_image, moving=moved_label,transformlist=mytx['fwdtransforms']
+#         return Y
+  
