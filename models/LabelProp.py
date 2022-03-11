@@ -16,7 +16,6 @@ from kornia.geometry.transform import elastic_transform2d
 from voxelmorph.torch.networks import VxmDense
 from voxelmorph.torch.layers import SpatialTransformer
 from voxelmorph.torch.losses import NCC,Grad,Dice
-from mermaid.module_parameters import ParameterDict as MermaidParameterDict
 import json
 from models.voxelmorph2D import VoxelMorph2d
 class LabelProp(pl.LightningModule):
