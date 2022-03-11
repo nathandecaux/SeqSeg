@@ -12,7 +12,6 @@ import numpy as np
 import monai
 import matplotlib.pyplot as plt
 import kornia
-from kornia.geometry import ImageRegistrator
 from kornia.geometry.transform import elastic_transform2d
 from voxelmorph.torch.networks import VxmDense
 from voxelmorph.torch.layers import SpatialTransformer

@@ -3,8 +3,6 @@ from tkinter import Image
 import sys
 # sys.path.append('/home/nathan/SeqSeg/models/TorchIR')
 from pytorch_lightning import Trainer
-
-from kornia.geometry import ImageRegistrator
 from soupsieve import select
 from models.LabelProp_comp import LabelProp
 import torch
