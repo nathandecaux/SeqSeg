@@ -30,7 +30,6 @@ from skimage.transform import resize
 from copy import deepcopy
 import kornia.augmentation as K
 import scipy.ndimage as nd
-
 class ConsistencyData(data.Dataset):
     def __init__(self, X):
         self.X = torch.from_numpy(X.astype('float32')).unsqueeze(1)
@@ -425,7 +424,7 @@ class InteractionData(data.Dataset):
 
 
 class PlexDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir: str = '/home/nathan/PLEX/norm',lab=1, supervised=True, subject_ids='all',test_ids=[],val_ids=[], limb='H', batch_size=8, mixup=0, aug=False,interpolate=False,dim=2,way='up',shape=(288,288),selected_slices=None):
+    def __init__(self, data_dir: str = os.environ.get('PLEX_PATH'),lab=1, supervised=True, subject_ids='all',test_ids=[],val_ids=[], limb='H', batch_size=8, mixup=0, aug=False,interpolate=False,dim=2,way='up',shape=(288,288),selected_slices=None):
         super().__init__()
         self.data_dir = data_dir
         if subject_ids == 'all':
