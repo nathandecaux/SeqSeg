@@ -1,0 +1,17 @@
+version: '3.7'
+services:
+  labelprop:
+    image: labelpropdocker:latest
+    tty: true
+    env_file:
+     - env_file
+    volumes:
+    - $PLEX_PATH:$PLEX_PATH
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '8gb'

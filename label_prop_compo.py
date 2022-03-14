@@ -1,5 +1,4 @@
 #%%
-from tkinter import Image
 import sys
 # sys.path.append('/home/nathan/SeqSeg/models/TorchIR')
 from pytorch_lightning import Trainer
