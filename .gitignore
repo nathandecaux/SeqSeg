@@ -13,4 +13,4 @@ results.json
 *.tex
 *.ipynb
 benchmark*.py
-!services.json
+!service.json
