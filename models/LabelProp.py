@@ -18,6 +18,7 @@ from voxelmorph.torch.layers import SpatialTransformer
 from voxelmorph.torch.losses import NCC,Grad,Dice
 import json
 from models.voxelmorph2D import VoxelMorph2d
+from monai.losses import GlobalMutualInformationLoss
 class LabelProp(pl.LightningModule):
 
     @property
@@ -100,7 +101,7 @@ class LabelProp(pl.LightningModule):
         loss_seg=0
         loss_trans=0
         if x1_hat!=None:
-            loss_ncc=NCC().loss(x1_hat,x2)
+            loss_ncc=GlobalMutualInformationLoss()(x1_hat,x2)
         if y!=None:
             loss_seg= Dice().loss(y,y2)
         if trans!=None:

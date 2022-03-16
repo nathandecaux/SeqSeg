@@ -10,10 +10,11 @@ import nibabel as ni
 import kornia.geometry as KG
 import torch.nn.functional as F
 from copy import deepcopy
-from voxelmorph.torch.networks import VxmDense
+from voxelmorph.torch.losses import NCC
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 import monai
+from monai.losses import GlobalMutualInformationLoss,LocalNormalizedCrossCorrelationLoss
 
     
 def to_batch(x,device='cpu'):
@@ -46,7 +47,7 @@ else:
 dir=f'/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/{dataset}'
 losses={'compo-reg-up':True,'compo-reg-down':True,'compo-dice-up':True,'compo-dice-down':True,'bidir-cons-reg':False,'bidir-cons-dice':False}
 
-ckpt_up=None#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/PLEX/up/labelprop-up-epoch=78-val_accuracy=0.79[0].ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=196-val_accuracy=0.99-15022022-232252.ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=183-val_accuracy=0.21-16022022-193136.ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"
+ckpt_up="/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/PLEX/up/labelprop-up-epoch=117-val_accuracy=0.61[0].ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/PLEX/up/labelprop-up-epoch=78-val_accuracy=0.79[0].ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=196-val_accuracy=0.99-15022022-232252.ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=183-val_accuracy=0.21-16022022-193136.ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"
 resume_ckpt=None#'labelprop-up-epoch=145-val_accuracy=0.98[0, 1].ckpt'
 ckpt_down="/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=160-val_accuracy=0.96-08022022-143909.ckpt"#'labelprop-up-epoch=97-val_accuracy=0.84[1].ckpt'
 selected_slices=[107,153,199]
@@ -135,9 +136,9 @@ X_out2=deepcopy(X)
 
 flows=torch.stack([X,X],1)
 flows2=deepcopy(flows)
-weights=torch.zeros((Y.shape[1]))
-for chunk in chunks:
-    weights[chunk[0]:chunk[1]]=torch.FloatTensor(range(chunk[1]-chunk[0]))-(chunk[1]-chunk[0])/2
+weights=torch.zeros((Y.shape[1],2))
+# for chunk in chunks:
+#     weights[chunk[0]:chunk[1]]=torch.FloatTensor(range(chunk[1]-chunk[0]))-(chunk[1]-chunk[0])/2
 # n=0
 # flag=False
 # for i in range(Y.shape[1]):
@@ -156,6 +157,7 @@ weights=(torch.arctan(C*weights)/3.14+0.5)
 Y2=deepcopy(Y)
 X_chunk=deepcopy(X)
 X_chunk2=deepcopy(X)
+similarity=GlobalMutualInformationLoss()
 
 for i in range(Y.shape[1]):
     y1=Y[:,i,...]
@@ -181,6 +183,7 @@ for i,x1 in enumerate(X):
             else:
                 print(i)
                 X_chunk[i+1,...]=model_up.registrator.transformer(to_batch(X[chunk_0[0]],'cuda'),flows[i+1:i+2,...].to('cuda'))[0]
+            weights[i+1,0]=-similarity(to_batch(X_chunk[i+1,...],'cuda'),to_batch(x2,'cuda'))
             # registrator=ImageRegistrator()
             # trans=registrator.register(to_batch(x1),to_batch(x2))
             # Y[i+1]=registrator.warp_src_into_dst(y1[None,...])[0].detach()
@@ -198,27 +201,28 @@ for i in range(X.shape[0]-1,1,-1):
         y1=Y2[:,i,...]
         
         if len(torch.unique(torch.argmax(y1,0)))>1 and len(torch.unique(torch.argmax(Y2[:,i-1,...],0)))==1:
-           x,y,trans=model_up.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
-           X_out2[i-1,...],Y2[:,i-1,...]=x.cpu().detach()[0],y.cpu().detach()[0]
-           flows2[i-1:i,...]=model_up.apply_trans(flows2[i:i+1,...].to('cuda'),trans)
-           chunk_1=[x[1] for x in chunks if i in range(x[0],x[1])]
+            x,y,trans=model_up.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
+            X_out2[i-1,...],Y2[:,i-1,...]=x.cpu().detach()[0],y.cpu().detach()[0]
+            flows2[i-1:i,...]=model_up.apply_trans(flows2[i:i+1,...].to('cuda'),trans)
+            chunk_1=[x[1] for x in chunks if i in range(x[0],x[1])]
 
-           if i-1 in selected_slices or len(chunk_1)==0:
+            if i-1 in selected_slices or len(chunk_1)==0:
                 X_chunk2[i-1,...]=X[i-1,...]
-           else:
-               
+            else:
                 X_chunk2[i-1,...]=model_up.registrator.transformer(to_batch(X[chunk_1[0]],'cuda'),flows2[i-1:i,...].to('cuda'))[0]
+            weights[i-1,1]=-similarity(to_batch(X_chunk2[i-1,...],'cuda'),to_batch(x2,'cuda'))
             #Y2[:,i-1,...]=model_up.registrator.transformer(y1[None,...].cuda(),flows[i:i+1].cuda())[0].cpu().detach()
 #             registrator=ImageRegistrator()
 #             trans=registrator.register(to_batch(x1),to_batch(x2))
 #             Y2[i-1]=registrator.warp_src_into_dst(y1[None,...])[0].detach()
 
-for i,w in enumerate(weights):
-    Y[:,i,...]*=1-w
-    Y2[:,i,...]*=w
-    X_chunk[i]*=1-w
-    X_chunk2[i]*=w
+weights=torch.nn.Softmax(1)(weights)
 
+for i,w in enumerate(weights):
+    Y[:,i,...]*=w[0]
+    Y2[:,i,...]*=w[1]
+    X_chunk[i]*=w[0]
+    X_chunk2[i]*=w[1]
 
 if selected_slices!=None:
     dices=[]

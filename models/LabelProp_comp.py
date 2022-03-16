@@ -105,7 +105,7 @@ class LabelProp(pl.LightningModule):
             loss_seg= Dice().loss(y[:,1:],y2[:,1:])
         if trans!=None:
             loss_trans=Grad().loss(trans,trans) #Recommanded weight for this loss is 1 (see Voxelmorph paper) 
-        return loss_ncc+loss_seg+loss_trans*1e-4
+        return loss_ncc+loss_seg*100+loss_trans
 
     def blend(self,x,y):
         #For visualization
@@ -138,7 +138,7 @@ class LabelProp(pl.LightningModule):
         chunk=[]
         loss_up=[]
         loss_down=[]
-
+   
         #Identifying chunks (i->j)
         for i in range(X.shape[2]):
             y2=Y[:,:,i,...]

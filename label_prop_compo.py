@@ -1,10 +1,12 @@
 #%%
 import sys
+import matplotlib.pyplot as plt
 # sys.path.append('/home/nathan/SeqSeg/models/TorchIR')
+import torch
+
 from pytorch_lightning import Trainer
 from soupsieve import select
 from models.LabelProp_comp import LabelProp
-import torch
 import numpy as np
 import nibabel as ni
 import kornia.geometry as KG
@@ -14,8 +16,7 @@ from voxelmorph.torch.networks import VxmDense
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 import monai
-
-    
+from monai.losses import GlobalMutualInformationLoss
 def to_batch(x,device='cpu'):
     return x[None,None,...].to(device)
 
@@ -46,7 +47,7 @@ else:
 dir=f'/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/{dataset}'
 losses={'compo-reg-up':True,'compo-reg-down':True,'compo-dice-up':True,'compo-dice-down':True,'bidir-cons-reg':False,'bidir-cons-dice':False}
 
-ckpt_up=None#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/PLEX/up/labelprop-up-epoch=17-val_accuracy=0.52[0].ckpt"#"/home/nathan/SeqSeg/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"#'/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/PLEX/up/labelprop-up-epoch=59-val_accuracy=0.45[0].ckpt'#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=180-val_accuracy=0.85-07022022-141236.ckpt"
+ckpt_up="/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/PLEX/up/labelprop-up-epoch=17-val_accuracy=0.52[0].ckpt"#"/home/nathan/SeqSeg/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"#'/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/PLEX/up/labelprop-up-epoch=59-val_accuracy=0.45[0].ckpt'#"/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=180-val_accuracy=0.85-07022022-141236.ckpt"
 #'/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/PLEX/up/labelprop-up-epoch=45-val_accuracy=0.22[0].ckpt'#"/home/nathan/SeqSeg/labelprop-epoch=96-val_accuracy=0.71-09022022-194748.ckpt"
 resume_ckpt=None#'labelprop-up-epoch=145-val_accuracy=0.98[0, 1].ckpt'
 ckpt_down="/home/nathan/SeqSeg/voxelmorph_ckpts/labelprop/bench/bench/labelprop-epoch=160-val_accuracy=0.96-08022022-143909.ckpt"#'labelprop-up-epoch=97-val_accuracy=0.84[1].ckpt'
@@ -132,18 +133,15 @@ X_out2=deepcopy(X)
 
 flows=torch.stack([X,X],1)
 flows2=deepcopy(flows)
-weights=torch.zeros((Y.shape[1]))
+weights=torch.zeros((Y.shape[1],2))
 n=0
 flag=False
 
-for chunk in chunks:
-    weights[chunk[0]:chunk[1]]=torch.FloatTensor(range(chunk[1]-chunk[0]))-(chunk[1]-chunk[0])/2
 
-weights=(torch.arctan(C*weights)/3.14+0.5)
 Y2=deepcopy(Y)
 X_chunk=deepcopy(X)
 X_chunk2=deepcopy(X)
-
+psnr=GlobalMutualInformationLoss()
 # for i in range(Y.shape[1]):
 #     y1=Y[:,i,...]
 #     if len(torch.unique(torch.argmax(y1,0)))>1:
@@ -159,30 +157,29 @@ for i,x1 in enumerate(X):
         y1=Y[:,i,...]
         if len(torch.unique(torch.argmax(Y[:,i+1,...],0)))==1 and len(torch.unique(torch.argmax(y1,0)))>1:
             chunk_0=[x[0] for x in chunks if i in range(x[0],x[1])]
-            chunk_1=[x[1] for x in chunks if i in range(x[0],x[1]+1)]
+            chunk_1=[x[1] for x in chunks if i in range(x[0],x[1])]
             x,y,trans=model_up.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
-            _,_,neg=model_up.register_images(to_batch(x2,'cuda'),to_batch(x1,'cuda'),y1[None,...].to('cuda'))
+            # _,_,neg=model_up.register_images(to_batch(x2,'cuda'),to_batch(x1,'cuda'),y1[None,...].to('cuda'))
             X_out[i+1,...],Y[:,i+1,...]=x.cpu().detach()[0],y.cpu().detach()[0]#,trans.unsqueeze(0)
             if i in chunk_0:
                 compo=[trans]
-                compo_neg=[neg]
             else:
                 compo.append(trans)
-                compo_neg.append(neg)
+                # compo_neg.append(neg)
                 # flows[i+1:i+2,...]=model_up.compose_deformation(compo,trans)
             if i+1 in selected_slices or len(chunk_0)==0:
                 X_chunk[i+1,...]=X[i+1,...]
             else:
                 X_chunk[i+1,...]=model_up.registrator.transformer(to_batch(X[chunk_0[0]],'cuda'),model_up.compose_list(compo).to('cuda'))[0]
                 Y[:,i+1,...]=model_up.registrator.transformer(Y[:,chunk_0[0],...][None,...].to('cuda'),model_up.compose_list(compo).to('cuda'))[0]
-
+                weights[i+1,0]=-psnr(X_chunk[i+1,...],x2)
 
             # registrator=ImageRegistrator()
             # trans=registrator.register(to_batch(x1),to_batch(x2))
             # Y[i+1]=registrator.warp_src_into_dst(y1[None,...])[0].detach()
             #Y[i+1]=registrator.warp_src_into_dst(y1[None,...])[0]
 
-
+torch.cuda.empty_cache()
 for i in range(X.shape[0]-1,1,-1):
     x1=X[i]
     try:
@@ -193,32 +190,44 @@ for i in range(X.shape[0]-1,1,-1):
         y1=Y2[:,i,...]
         
         if len(torch.unique(torch.argmax(y1,0)))>1 and len(torch.unique(torch.argmax(Y2[:,i-1,...],0)))==1:
-           chunk_1=[x[1] for x in chunks if i in range(x[0],x[1]+1)]
-           x,y,trans=model_up.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
-           X_out2[i-1,...],Y2[:,i-1,...]=x.cpu().detach()[0],y.cpu().detach()[0]
-           print(chunk_1,[i])
-           if i in chunk_1:
-               negs=[trans]
-           else:
-               negs.append(trans)
+            chunk_0=[x[0] for x in chunks if i in range(x[0],x[1]+1)]
+            chunk_1=[x[1] for x in chunks if i in range(x[0],x[1]+1)]
+            if len(chunk_1)>0:
+                x,y,trans=model_up.register_images(to_batch(x1,'cuda'),to_batch(x2,'cuda'),y1[None,...].to('cuda'))
+                X_out2[i-1,...],Y2[:,i-1,...]=x.cpu().detach()[0],y.cpu().detach()[0]
+                x1.cpu().detach()
+                x2.cpu().detach()
+                y1.cpu().detach()
+                print(chunk_1,[i])
+                if i in chunk_1:
+                    negs=[trans]
+                else:
+                    negs.append(trans)
 
-           if i-1 in selected_slices or len(chunk_1)==0:
-                X_chunk2[i-1,...]=X[i-1,...]
-           else:
-               
-                X_chunk2[i-1,...]=model_up.registrator.transformer(to_batch(X[chunk_1[0]],'cuda'),model_up.compose_list(negs).to('cuda'))[0]
-                Y2[:,i-1,...]=model_up.registrator.transformer(Y2[:,chunk_1[0],...][None,...].to('cuda'),model_up.compose_list(negs).to('cuda'))[0]
+                if i-1 in selected_slices or len(chunk_1)==0:
+                        X_chunk2[i-1,...]=X[i-1,...]
+                else:
+                    
+                        X_chunk2[i-1,...]=model_up.registrator.transformer(to_batch(X[chunk_1[0]],'cuda'),model_up.compose_list(negs).to('cuda'))[0].cpu().detach()
+                        Y2[:,i-1,...]=model_up.registrator.transformer(Y2[:,chunk_1[0],...][None,...].to('cuda'),model_up.compose_list(negs).to('cuda'))[0].cpu().detach()
+                        weights[i+1,1]=-psnr(X_chunk2[i-1,...],x2)
+                    #Y2[:,i-1,...]=model_up.registrator.transformer(y1[None,...].cuda(),flows[i:i+1].cuda())[0].cpu().detach()
+        #             registrator=ImageRegistrator()
+        #             trans=registrator.register(to_batch(x1),to_batch(x2))
+        #             Y2[i-1]=registrator.warp_src_into_dst(y1[None,...])[0].detach()
 
-            #Y2[:,i-1,...]=model_up.registrator.transformer(y1[None,...].cuda(),flows[i:i+1].cuda())[0].cpu().detach()
-#             registrator=ImageRegistrator()
-#             trans=registrator.register(to_batch(x1),to_batch(x2))
-#             Y2[i-1]=registrator.warp_src_into_dst(y1[None,...])[0].detach()
-
+# for chunk in chunks:
+#     weights[chunk[0]:chunk[1]]=torch.FloatTensor(range(chunk[1]-chunk[0]))-(chunk[1]-chunk[0])/2
+weights=torch.nn.Softmax(1)(weights)
+plt.figure()
+plt.plot(weights.cpu().detach())
+plt.show()
+# weights=(torch.arctan(C*weights)/3.14+0.5)
 for i,w in enumerate(weights):
-    Y[:,i,...]*=1-w
-    Y2[:,i,...]*=w
-    X_chunk[i]*=1-w
-    X_chunk2[i]*=w
+    Y[:,i,...]*=w[0]
+    Y2[:,i,...]*=w[1]
+    X_chunk[i]*=w[0]
+    X_chunk2[i]*=w[1]
 #%%
 if selected_slices!=None:
     dices=[]
